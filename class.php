@@ -234,7 +234,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->orderCostGrouped = [];
 
         foreach ($ordersCost as $orderCost) {
-            $dealerDate = (new \DateTime($orderCost['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
+            $dealerDate = (\DateTime::createFromFormat('U', $orderCost['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
             $interval = $this->getGroupInterval($this->groupBy, $dealerDate, $minimalDate);
             $this->orderCostGrouped[$interval][] = $orderCost;
         }
