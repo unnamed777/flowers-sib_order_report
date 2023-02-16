@@ -296,7 +296,8 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->adPricesGrouped = [];
 
         while ($item = $iterator->fetch()) {
-            $date = (new \DateTime($item['UF_DATE']))->setTimezone($this->reportTimezone);
+            // Treat ad price date as report timezone
+            $date = (new \DateTime($item['UF_DATE'], $this->reportTimezone));
             $interval = $this->getGroupInterval($this->groupBy, $date, $minimalDate);
 
             if (!isset($this->adPricesGrouped[$interval])) {
@@ -401,7 +402,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
 
     protected function getGroupInterval(string $period, \DateTimeInterface $itemDate, \DateTimeInterface $minimalDate): string
     {
-        //$minimalDate = $this->filterStartDate;
+        $minimalDate = $this->filterStartDate;
         $startDate = clone $itemDate;//new \DateTime();
 
         switch ($period) {
