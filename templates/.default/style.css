@@ -1,0 +1,38 @@
+.report-table__outer-wrap {
+    width: 100%;
+    padding: 10px;
+    min-height: 200px;
+}
+
+.report-table__inner-wrap {
+    width: 100%;
+    height:90vh;
+    overflow: scroll;
+}
+
+.report-table {
+
+}
+.report-table thead {
+    background: #fff;
+}
+.report-table-header td {
+    min-width: 125px;
+    padding: 5px;
+    border: 1px solid #ccc;
+
+}
+
+.report-table td {
+    min-width: 125px;
+    padding: 5px;
+    border: 1px solid #ccc;
+}
+
+.date-row td {
+    background: cyan;
+}
+
+td.cell-green {
+    background: lightgreen;
+}
