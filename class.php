@@ -340,7 +340,6 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             }
 
             $reportRow['SUM_AVG'] = $reportRow['PAYED'] > 0 ? round($reportRow['TOTAL_SUM'] / $reportRow['PAYED'], 2) : null;
-            $reportRow['PERCENTS'] = $reportRow['TOTAL'] > 0 ? round($reportRow['PAYED'] / $reportRow['TOTAL'] * 100, 2) : null;
             $reportRow['AD_PRICE'] = null;
             $reportRow['CLEAN_TOTAL'] = $reportRow['TOTAL_SUM'];
             $reportRow['ORDER_PRICE'] = 0;
