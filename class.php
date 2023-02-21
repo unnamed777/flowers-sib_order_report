@@ -164,8 +164,8 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
 
         if (empty($this->arResult['FILTER']['DATE_FROM']) && empty($this->arResult['FILTER']['DATE_TO'])) {
             // Don't use timezone here intentionally, because it will be set below
-            $sevenDaysAgo = (new \DateTime)->modify('-7 days');
-            $today = (new \DateTime)->format('d.m.Y');
+            $sevenDaysAgo = (new \DateTime)->setTimezone($this->reportTimezone)->modify('-7 days');
+            $today = (new \DateTime)->setTimezone($this->reportTimezone)->format('d.m.Y');
             $this->arResult['FILTER']['DATE_FROM'] = $sevenDaysAgo->format('d.m.Y');//$sevenDaysAgo;
             $this->arResult['FILTER']['DATE_TO'] = $today;
         }
@@ -176,7 +176,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             $date->modify('midnight');
             // Convert to server timezone
             $date->setTimezone($this->serverTimeZone);
-            $this->filterStartDate = \DateTimeImmutable::createFromMutable($date);
+            $this->filterStartDate = \DateTimeImmutable::createFromInterface($date);
             $this->filterStartDateFormatted = ConvertTimeStamp($this->filterStartDate->getTimestamp(), 'FULL');
 
             $arFilter['>=DATE_INSERT'] = $this->filterStartDateFormatted;
@@ -188,7 +188,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             $date = new \DateTime(substr($this->arResult['FILTER']['DATE_TO'], 0, 10) . ' 23:59:59', $this->reportTimezone);
             // Convert to server timezone
             $date->setTimezone($this->serverTimeZone);
-            $this->filterEndDate = \DateTimeImmutable::createFromMutable($date);
+            $this->filterEndDate = \DateTimeImmutable::createFromInterface($date);
             $this->filterEndDateFormatted = ConvertTimeStamp($this->filterEndDate->getTimestamp(), 'FULL');
 
             $arFilter['<=DATE_INSERT'] = $this->filterEndDateFormatted;
@@ -268,7 +268,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             $orders[$arProp['ORDER_ID']]['PROPS'][$arProp['CODE']] = $arProp;
         }
 
-        $minimalDate = new \DateTime($this->arResult['FILTER']['DATE_FROM']);
+        $minimalDate = $this->filterStartDate; //new \DateTime($this->arResult['FILTER']['DATE_FROM']);
         $this->dateList = [];
 
         foreach ($orders as $order) {
@@ -400,10 +400,10 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         unset($reportRow);
     }
 
-    protected function getGroupInterval(string $period, \DateTimeInterface $itemDate, \DateTimeInterface $minimalDate): string
+    protected function getGroupInterval(string $period, \DateTimeInterface $itemDate): string
     {
         $minimalDate = $this->filterStartDate;
-        $startDate = clone $itemDate;//new \DateTime();
+        $startDate = \DateTimeImmutable::createFromInterface($itemDate)->setTimeZone($this->reportTimezone);
 
         switch ($period) {
             case static::GROUP_BY_DAY:
@@ -420,10 +420,10 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
                 break;
 
             case static::GROUP_BY_MONTH:
-                $startDate = $startDate->modify('first day of this month');
-
-                $endDate = (clone $itemDate)
+                $endDate = $startDate
                     ->modify('last day of this month');
+
+                $startDate = $startDate->modify('first day of this month');
                 break;
 
             default:
