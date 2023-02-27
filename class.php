@@ -28,6 +28,8 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
     /** @var ?\DateTimeImmutable Uses server timezone */
     protected ?\DateTimeImmutable $filterEndDate = null;
     protected string $filterEndDateFormatted;
+    /** @var \Bitrix\Main\Error[] */
+    protected array $errors = [];
 
     const GROUP_BY_DAY = 'day';
     const GROUP_BY_WEEK = 'week';
@@ -51,7 +53,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->buildReport();
     }
 
-    protected function initGroupMode(): void
+    private function initGroupMode(): void
     {
         $groupBy = $this->request->get('groupBy') ?? null;
 
@@ -64,7 +66,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->arResult['GROUP_BY'] = $this->groupBy;
     }
 
-    protected function savePrices(): void
+    private function savePrices(): void
     {
         if (!isset($_POST['submit-prices'])) {
             return;
@@ -93,7 +95,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         }
     }
 
-    protected function loadLocations()
+    private function loadLocations()
     {
         $locations = [];
 
@@ -121,7 +123,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->arResult['LOCS'] = $locations;
     }
 
-    protected function prepareFilter(): void
+    private function prepareFilter(): void
     {
         if ($_REQUEST['filter']) {
             foreach ($_REQUEST['filter'] as $field => $val) {
@@ -205,7 +207,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->arFilter = array_merge($arFilter, $arDefaultFilter);
     }
 
-    protected function loadOrderCosts(): void
+    private function loadOrderCosts(): void
     {
         $arSelectCost = ['ID', 'ACCOUNT_NUMBER', 'DATE_INSERT', 'DATE_UPDATE', 'COMMENTS', 'PRICE'];
         $dbOrderCost = \CSaleOrder::GetList(['PROPERTY_VAL_BY_CODE_DEALER_DATE' => 'ASC'], $this->arFilterCost, false, false, $arSelectCost);
@@ -227,6 +229,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         ]);
 
         while ($arPropCost = $obPropsCost->fetch()) {
+            $ordersCost[$arPropCost['ORDER_ID']]['ID'] = $arPropCost['ORDER_ID'];
             $ordersCost[$arPropCost['ORDER_ID']]['PROPS'][$arPropCost['CODE']] = $arPropCost;
         }
 
@@ -234,13 +237,34 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->orderCostGrouped = [];
 
         foreach ($ordersCost as $orderCost) {
-            $dealerDate = (\DateTime::createFromFormat('U', $orderCost['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
-            $interval = $this->getGroupInterval($this->groupBy, $dealerDate, $minimalDate);
+            $dateToGroup = $this->getReportDateForOrderCost($orderCost);
+            //$dealerDate = (\DateTime::createFromFormat('U', $orderCost['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
+            $interval = $this->getGroupInterval($this->groupBy, $dateToGroup);
             $this->orderCostGrouped[$interval][] = $orderCost;
         }
     }
 
-    protected function loadOrders(): void
+    /**
+     * Supposed to be overridden in local component
+     */
+    protected function getReportDateForOrderCost(array $order): ?\DateTime
+    {
+        if (empty($order['PROPS']['DEALER_DATE']['VALUE'])) {
+            $this->errors[] = new \Bitrix\Main\Error('Пустая дата DEALER_DATE для заказа ' . (int) $order['ID']);
+            return null;
+        }
+
+        try {
+            $date = (\DateTime::createFromFormat('U', $order['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
+        } catch (\Exception $e) {
+            $this->errors[] = new \Bitrix\Main\Error('Ошибка получения даты DEALER_DATE для заказа ' . (int) $order['ID']);
+            return null;
+        }
+
+        return $date;
+    }
+
+    private function loadOrders(): void
     {
         $this->ordersGrouped = [];
         $orders = [];
@@ -249,18 +273,13 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $dbOrder = \CSaleOrder::GetList(['DATE_INSERT' => 'ASC'], $this->arFilter, false, false, $arSelect);
 
         while ($arOrder = $dbOrder->Fetch()) {
-            $arOrder['DATE_INSERT_ORIGINAL'] = $arOrder['DATE_INSERT'];
-            $arOrder['DATE_INSERT'] = new \DateTimeImmutable($arOrder['DATE_INSERT_ORIGINAL']);
             $orders[$arOrder['ID']] = $arOrder;
         }
 
         $obProps = \Bitrix\Sale\Internals\OrderPropsValueTable::getList([
             'filter' => [
                 'ORDER_ID' => array_keys($orders),
-                'CODE' => [
-                    'PAID_BY_CLIENT',
-                    'RETURN_CANCEL_STATUS',
-                ]
+                'CODE' => $this->getPropertyCodesForOrderLoading(),
             ]
         ]);
 
@@ -272,19 +291,43 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->dateList = [];
 
         foreach ($orders as $order) {
-            /** @var \DateTimeImmutable $dateInsert */
-            $dateInsert = $order['DATE_INSERT'];
-            $dateInsertFormatted = $dateInsert->setTimezone($this->reportTimezone)->format('d.m.Y');
+            $dateToGroup = $this->getReportDateForOrder($order);
+
+            if (empty($dateToGroup)) {
+                $this->errors[] = new \Bitrix\Main\Error('Ошибка получения отчётной даты для `loadOrders()` по заказу ' . (int) $order['ID']);
+                continue;
+            }
+
+            $dateInsertFormatted = \DateTime::createFromInterface($dateToGroup)->setTimezone($this->reportTimezone)->format('d.m.Y');
             $this->dateList[] = $dateInsertFormatted;
 
-            $interval = $this->getGroupInterval($this->groupBy, $dateInsert, $minimalDate);
+            $interval = $this->getGroupInterval($this->groupBy, $dateToGroup, $minimalDate);
             $this->ordersGrouped[$interval][] = $order;
         }
 
         $this->dateList = array_unique($this->dateList);
     }
 
-    protected function loadAdPrices(): void
+    /**
+     * Supposed to be overridden in local component
+     */
+    protected function getPropertyCodesForOrderLoading(): array
+    {
+        return [
+            'PAID_BY_CLIENT',
+            'RETURN_CANCEL_STATUS',
+        ];
+    }
+
+    /**
+     * Supposed to be overridden in local component
+     */
+    protected function getReportDateForOrder(array $order): ?\DateTime
+    {
+        return new \DateTime($order['DATE_INSERT']);
+    }
+
+    private function loadAdPrices(): void
     {
         $iterator = PriceTable::getList([
             'filter' => [
@@ -308,7 +351,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         }
     }
 
-    protected function buildReport(): void
+    private function buildReport(): void
     {
         $this->reportRows = [];
 
@@ -319,7 +362,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->calcSummary();
     }
 
-    protected function processOrders(): void
+    private function processOrders(): void
     {
         foreach ($this->ordersGrouped as $day => $orders) {
             $ordersCount = count($orders);
@@ -350,7 +393,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->ordersGrouped = [];
     }
 
-    protected function processOrderCosts(): void
+    private function processOrderCosts(): void
     {
         foreach ($this->orderCostGrouped as $date => $orders) {
             if (!isset($this->reportRows[$date])) {
@@ -371,7 +414,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->orderCostGrouped = [];
     }
 
-    protected function processAdCosts(): void
+    private function processAdCosts(): void
     {
         foreach ($this->adPricesGrouped as $interval => $price) {
             if (!isset($this->reportRows[$interval])) {
@@ -399,7 +442,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         unset($reportRow);
     }
 
-    protected function getGroupInterval(string $period, \DateTimeInterface $itemDate): string
+    private function getGroupInterval(string $period, \DateTimeInterface $itemDate): string
     {
         $minimalDate = $this->filterStartDate;
         $startDate = \DateTimeImmutable::createFromInterface($itemDate)->setTimeZone($this->reportTimezone);
@@ -435,7 +478,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         return $start->format('d.m.Y') . (isset($endDate) ? ' - ' . $endDate->format('d.m.Y') : '');
     }
 
-    protected function calcSummary()
+    private function calcSummary()
     {
         $totalStats = [
             'TOTAL_SUM' => 0,
