@@ -94,12 +94,12 @@ $i18n = fn ($code) => Loc::getMessage('NAV_ORDER_REPORT_PROFIT_' . $code);
                 <tr>
                     <th><?=$i18n('COLUMN_DATE')?></th>
                     <th><?=$i18n('COLUMN_TOTAL_SUM')?></th>
-                    <th><?=$i18n('COLUMN_PAID_ORDERS_SUM')?></th>
-                    <th><?=$i18n('COLUMN_AVG_BILL')?></th>
-                    <th><?=$i18n('COLUMN_AD_COSTS')?></th>
-                    <th><?=$i18n('COLUMN_SUPPLIER_COSTS')?></th>
+                    <th><?=$i18n('COLUMN_PAID_ORDERS_COUNT')?></th>
+                    <th><?=$i18n('COLUMN_AVG_SUM')?></th>
+                    <th><?=$i18n('COLUMN_AD')?></th>
+                    <th><?=$i18n('COLUMN_SUPPLIER')?></th>
                     <th><?=$i18n('COLUMN_CLEAN_TOTAL')?></th>
-                    <th><?=$i18n('COLUMN_ORDERS_COUNT')?></th>
+                    <th><?=$i18n('COLUMN_TOTAL_COUNT')?></th>
                     <th><?=$i18n('COLUMN_ORDER_PRICE')?></th>
                     <th><?=$i18n('COLUMN_GRAND')?></th>
                     <th><?=$i18n('COLUMN_MARGIN')?></th>
@@ -117,18 +117,18 @@ $i18n = fn ($code) => Loc::getMessage('NAV_ORDER_REPORT_PROFIT_' . $code);
                     <tr>
                         <td><?=$date?><?=$star?></td>
                         <td><?=$stat['TOTAL_SUM']?></td>
-                        <td><?=$stat['PAYED']?></td>
+                        <td><?=$stat['PAYED_COUNT']?></td>
                         <td><?=$stat['SUM_AVG']?></td>
                         <td>
                             <? if ($arResult['GROUP_BY'] === 'day'): ?>
-                                <input type="text" name="price[<?= $date ?>]" value="<?=$stat['AD_PRICE'] ?? ''?>">
+                                <input type="text" name="price[<?= $date ?>]" value="<?=$stat['AD'] ?? ''?>">
                             <? else: ?>
-                                <?=$stat['AD_PRICE'] ?? ''?>
+                                <?=$stat['AD'] ?? ''?>
                             <? endif ?>
                         </td>
-                        <td><?=$stat['COST_PRICE']?></td>
+                        <td><?=$stat['SUPPLIER']?></td>
                         <td><?=$stat['CLEAN_TOTAL'] ?? ''?></td>
-                        <td><?=$stat['TOTAL'] ?></td>
+                        <td><?=$stat['TOTAL_COUNT'] ?></td>
                         <td><?=$stat['ORDER_PRICE'] ?? ''?></td>
                         <td><?=$stat['GRAND'] ?? ''?></td>
                         <td><?=$stat['MARGIN'] ?? ''?></td>
@@ -139,12 +139,12 @@ $i18n = fn ($code) => Loc::getMessage('NAV_ORDER_REPORT_PROFIT_' . $code);
                 <tr>
                     <td><?=$i18n('SUMMARY')?></td>
                     <td><?=$arResult['TOTAL_STATS']['TOTAL_SUM']?></td>
-                    <td><?=$arResult['TOTAL_STATS']['PAYED']?></td>
+                    <td><?=$arResult['TOTAL_STATS']['PAYED_COUNT']?></td>
                     <td><?=$arResult['TOTAL_STATS']['SUM_AVG']?></td>
-                    <td><?=$arResult['TOTAL_STATS']['AD_PRICE']?></td>
-                    <td><?=$arResult['TOTAL_STATS']['COST_PRICE']?></td>
+                    <td><?=$arResult['TOTAL_STATS']['AD']?></td>
+                    <td><?=$arResult['TOTAL_STATS']['SUPPLIER']?></td>
                     <td><?=$arResult['TOTAL_STATS']['CLEAN_TOTAL']?></td>
-                    <td><?=$arResult['TOTAL_STATS']['TOTAL'] ?></td>
+                    <td><?=$arResult['TOTAL_STATS']['TOTAL_COUNT'] ?></td>
                     <td><?=$arResult['TOTAL_STATS']['ORDER_PRICE']?></td>
                     <td><?=$arResult['TOTAL_STATS']['GRAND']?></td>
                     <td><?=$arResult['TOTAL_STATS']['MARGIN']?></td>

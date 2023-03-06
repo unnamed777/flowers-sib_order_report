@@ -4,30 +4,62 @@ use Esav\Floexp\PriceTable;
 
 \CBitrixComponent::includeComponentClass("nav:component");
 
+/**
+ * @psalm-type ManagerOrderReportProfitRow = array{
+ *     TOTAL_SUM: float,
+ *     PAYED_COUNT: int,
+ *     SUM_AVG: float,
+ *     SUPPLIER: float,
+ *     CLEAN_TOTAL: float,
+ *     TOTAL_COUNT: int,
+ *     ORDER_PRICE: float,
+ *     GRAND: float,
+ *     MARGIN: float,
+ * }
+ */
 class ManagerOrderReportProfit extends \Nav\Component\Component
 {
     protected $modules = ['sale'];
 
     protected string $groupBy;
+
     protected array $arFilter;
+
     protected array $arFilterCost;
+
+    /** @var string[] */
     protected array $dateList;
-    /** @var array<string,array> */
+
+    /** @var array<string,float> */
     protected array $adPricesGrouped;
+
     /** @var array<string,array> */
     protected array $ordersGrouped;
+
     /** @var array<string,array> */
     protected array $orderCostGrouped;
-    /** @var array<string,array> */
+
+    /** @var array<string,ManagerOrderReportProfitRow> */
     protected array $reportRows;
+
     protected \DateTimeZone $reportTimezone;
+
     protected \DateTimeZone $serverTimeZone;
+
     /** @var ?\DateTimeImmutable Uses server timezone */
     protected ?\DateTimeImmutable $filterStartDate = null;
+
     protected string $filterStartDateFormatted;
+
     /** @var ?\DateTimeImmutable Uses server timezone */
     protected ?\DateTimeImmutable $filterEndDate = null;
+
     protected string $filterEndDateFormatted;
+
+    /** @var \Bitrix\Main\Error[] */
+    protected array $errors = [];
+
+    protected float $grandCoefficient = 0.93;
 
     const GROUP_BY_DAY = 'day';
     const GROUP_BY_WEEK = 'week';
@@ -51,7 +83,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->buildReport();
     }
 
-    protected function initGroupMode(): void
+    private function initGroupMode(): void
     {
         $groupBy = $this->request->get('groupBy') ?? null;
 
@@ -64,7 +96,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->arResult['GROUP_BY'] = $this->groupBy;
     }
 
-    protected function savePrices(): void
+    private function savePrices(): void
     {
         if (!isset($_POST['submit-prices'])) {
             return;
@@ -93,7 +125,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         }
     }
 
-    protected function loadLocations()
+    private function loadLocations()
     {
         $locations = [];
 
@@ -121,7 +153,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->arResult['LOCS'] = $locations;
     }
 
-    protected function prepareFilter(): void
+    private function prepareFilter(): void
     {
         if ($_REQUEST['filter']) {
             foreach ($_REQUEST['filter'] as $field => $val) {
@@ -164,8 +196,8 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
 
         if (empty($this->arResult['FILTER']['DATE_FROM']) && empty($this->arResult['FILTER']['DATE_TO'])) {
             // Don't use timezone here intentionally, because it will be set below
-            $sevenDaysAgo = (new \DateTime)->modify('-7 days');
-            $today = (new \DateTime)->format('d.m.Y');
+            $sevenDaysAgo = (new \DateTime)->setTimezone($this->reportTimezone)->modify('-7 days');
+            $today = (new \DateTime)->setTimezone($this->reportTimezone)->format('d.m.Y');
             $this->arResult['FILTER']['DATE_FROM'] = $sevenDaysAgo->format('d.m.Y');//$sevenDaysAgo;
             $this->arResult['FILTER']['DATE_TO'] = $today;
         }
@@ -176,7 +208,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             $date->modify('midnight');
             // Convert to server timezone
             $date->setTimezone($this->serverTimeZone);
-            $this->filterStartDate = \DateTimeImmutable::createFromMutable($date);
+            $this->filterStartDate = \DateTimeImmutable::createFromInterface($date);
             $this->filterStartDateFormatted = ConvertTimeStamp($this->filterStartDate->getTimestamp(), 'FULL');
 
             $arFilter['>=DATE_INSERT'] = $this->filterStartDateFormatted;
@@ -188,7 +220,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             $date = new \DateTime(substr($this->arResult['FILTER']['DATE_TO'], 0, 10) . ' 23:59:59', $this->reportTimezone);
             // Convert to server timezone
             $date->setTimezone($this->serverTimeZone);
-            $this->filterEndDate = \DateTimeImmutable::createFromMutable($date);
+            $this->filterEndDate = \DateTimeImmutable::createFromInterface($date);
             $this->filterEndDateFormatted = ConvertTimeStamp($this->filterEndDate->getTimestamp(), 'FULL');
 
             $arFilter['<=DATE_INSERT'] = $this->filterEndDateFormatted;
@@ -205,7 +237,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->arFilter = array_merge($arFilter, $arDefaultFilter);
     }
 
-    protected function loadOrderCosts(): void
+    private function loadOrderCosts(): void
     {
         $arSelectCost = ['ID', 'ACCOUNT_NUMBER', 'DATE_INSERT', 'DATE_UPDATE', 'COMMENTS', 'PRICE'];
         $dbOrderCost = \CSaleOrder::GetList(['PROPERTY_VAL_BY_CODE_DEALER_DATE' => 'ASC'], $this->arFilterCost, false, false, $arSelectCost);
@@ -227,6 +259,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         ]);
 
         while ($arPropCost = $obPropsCost->fetch()) {
+            $ordersCost[$arPropCost['ORDER_ID']]['ID'] = $arPropCost['ORDER_ID'];
             $ordersCost[$arPropCost['ORDER_ID']]['PROPS'][$arPropCost['CODE']] = $arPropCost;
         }
 
@@ -234,13 +267,40 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->orderCostGrouped = [];
 
         foreach ($ordersCost as $orderCost) {
-            $dealerDate = (\DateTime::createFromFormat('U', $orderCost['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
-            $interval = $this->getGroupInterval($this->groupBy, $dealerDate, $minimalDate);
+            $dateToGroup = $this->getReportDateForOrderCost($orderCost);
+
+            if ($dateToGroup === null) {
+                $this->errors[] = new \Bitrix\Main\Error('Ошибка получения отчётной даты для `loadOrderCosts()` по заказу ' . (int) $orderCost['ID']);
+                continue;
+            }
+
+            //$dealerDate = (\DateTime::createFromFormat('U', $orderCost['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
+            $interval = $this->getGroupInterval($this->groupBy, $dateToGroup);
             $this->orderCostGrouped[$interval][] = $orderCost;
         }
     }
 
-    protected function loadOrders(): void
+    /**
+     * Supposed to be overridden in local component
+     */
+    protected function getReportDateForOrderCost(array $order): ?\DateTime
+    {
+        if (empty($order['PROPS']['DEALER_DATE']['VALUE'])) {
+            $this->errors[] = new \Bitrix\Main\Error('Пустая дата DEALER_DATE для заказа ' . (int) $order['ID']);
+            return null;
+        }
+
+        try {
+            $date = (\DateTime::createFromFormat('U', $order['PROPS']['DEALER_DATE']['VALUE']))->setTimezone($this->reportTimezone);
+        } catch (\Exception $e) {
+            $this->errors[] = new \Bitrix\Main\Error('Ошибка получения даты DEALER_DATE для заказа ' . (int) $order['ID']);
+            return null;
+        }
+
+        return $date;
+    }
+
+    private function loadOrders(): void
     {
         $this->ordersGrouped = [];
         $orders = [];
@@ -249,18 +309,13 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $dbOrder = \CSaleOrder::GetList(['DATE_INSERT' => 'ASC'], $this->arFilter, false, false, $arSelect);
 
         while ($arOrder = $dbOrder->Fetch()) {
-            $arOrder['DATE_INSERT_ORIGINAL'] = $arOrder['DATE_INSERT'];
-            $arOrder['DATE_INSERT'] = new \DateTimeImmutable($arOrder['DATE_INSERT_ORIGINAL']);
             $orders[$arOrder['ID']] = $arOrder;
         }
 
         $obProps = \Bitrix\Sale\Internals\OrderPropsValueTable::getList([
             'filter' => [
                 'ORDER_ID' => array_keys($orders),
-                'CODE' => [
-                    'PAID_BY_CLIENT',
-                    'RETURN_CANCEL_STATUS',
-                ]
+                'CODE' => $this->getPropertyCodesForOrderLoading(),
             ]
         ]);
 
@@ -268,23 +323,47 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             $orders[$arProp['ORDER_ID']]['PROPS'][$arProp['CODE']] = $arProp;
         }
 
-        $minimalDate = new \DateTime($this->arResult['FILTER']['DATE_FROM']);
+        $minimalDate = $this->filterStartDate; //new \DateTime($this->arResult['FILTER']['DATE_FROM']);
         $this->dateList = [];
 
         foreach ($orders as $order) {
-            /** @var \DateTimeImmutable $dateInsert */
-            $dateInsert = $order['DATE_INSERT'];
-            $dateInsertFormatted = $dateInsert->setTimezone($this->reportTimezone)->format('d.m.Y');
+            $dateToGroup = $this->getReportDateForOrder($order);
+
+            if (empty($dateToGroup)) {
+                $this->errors[] = new \Bitrix\Main\Error('Ошибка получения отчётной даты для `loadOrders()` по заказу ' . (int) $order['ID']);
+                continue;
+            }
+
+            $dateInsertFormatted = \DateTime::createFromInterface($dateToGroup)->setTimezone($this->reportTimezone)->format('d.m.Y');
             $this->dateList[] = $dateInsertFormatted;
 
-            $interval = $this->getGroupInterval($this->groupBy, $dateInsert, $minimalDate);
+            $interval = $this->getGroupInterval($this->groupBy, $dateToGroup, $minimalDate);
             $this->ordersGrouped[$interval][] = $order;
         }
 
         $this->dateList = array_unique($this->dateList);
     }
 
-    protected function loadAdPrices(): void
+    /**
+     * Supposed to be overridden in local component
+     */
+    protected function getPropertyCodesForOrderLoading(): array
+    {
+        return [
+            'PAID_BY_CLIENT',
+            'RETURN_CANCEL_STATUS',
+        ];
+    }
+
+    /**
+     * Supposed to be overridden in local component
+     */
+    protected function getReportDateForOrder(array $order): ?\DateTime
+    {
+        return new \DateTime($order['DATE_INSERT']);
+    }
+
+    private function loadAdPrices(): void
     {
         $iterator = PriceTable::getList([
             'filter' => [
@@ -308,7 +387,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         }
     }
 
-    protected function buildReport(): void
+    private function buildReport(): void
     {
         $this->reportRows = [];
 
@@ -319,50 +398,50 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->calcSummary();
     }
 
-    protected function processOrders(): void
+    private function processOrders(): void
     {
         foreach ($this->ordersGrouped as $day => $orders) {
             $ordersCount = count($orders);
             $this->reportRows[$day] = [];
             $reportRow = &$this->reportRows[$day];
 
-            $reportRow['TOTAL'] = $ordersCount;
-            $reportRow['PAYED'] = 0;
+            $reportRow['TOTAL_COUNT'] = $ordersCount;
+            $reportRow['PAYED_COUNT'] = 0;
             $reportRow['CANCELED'] = 0;
             $reportRow['RETURNED'] = 0;
             $reportRow['TOTAL_SUM'] = 0;
 
             foreach ($orders as $order) {
                 if ($order['PROPS']['PAID_BY_CLIENT']['VALUE'] == 'Y') {
-                    $reportRow['PAYED']++;
+                    $reportRow['PAYED_COUNT']++;
                     $reportRow['TOTAL_SUM'] += (float) $order['PRICE'];
                 }
             }
 
-            $reportRow['SUM_AVG'] = $reportRow['PAYED'] > 0 ? round($reportRow['TOTAL_SUM'] / $reportRow['PAYED'], 2) : null;
-            $reportRow['AD_PRICE'] = null;
+            $reportRow['SUM_AVG'] = $reportRow['PAYED_COUNT'] > 0 ? round($reportRow['TOTAL_SUM'] / $reportRow['PAYED_COUNT'], 2) : null;
+            $reportRow['AD'] = null;
             $reportRow['CLEAN_TOTAL'] = $reportRow['TOTAL_SUM'];
             $reportRow['ORDER_PRICE'] = 0;
-            $reportRow['COST_PRICE'] = 0;
+            $reportRow['SUPPLIER'] = 0;
         }
 
         unset($reportRow);
         $this->ordersGrouped = [];
     }
 
-    protected function processOrderCosts(): void
+    private function processOrderCosts(): void
     {
         foreach ($this->orderCostGrouped as $date => $orders) {
             if (!isset($this->reportRows[$date])) {
                 $this->reportRows[$date] = [
-                    'COST_PRICE' => 0,
+                    'SUPPLIER' => 0,
                 ];
             }
 
             $reportRow = &$this->reportRows[$date];
 
             foreach ($orders as $order) {
-                $reportRow['COST_PRICE'] += (float) $order['PROPS']['COST_PRICE']['VALUE'];
+                $reportRow['SUPPLIER'] += (float) $order['PROPS']['COST_PRICE']['VALUE'];
             }
 
             unset($reportRow);
@@ -371,7 +450,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         $this->orderCostGrouped = [];
     }
 
-    protected function processAdCosts(): void
+    private function processAdCosts(): void
     {
         foreach ($this->adPricesGrouped as $interval => $price) {
             if (!isset($this->reportRows[$interval])) {
@@ -379,10 +458,7 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
             }
 
             $reportRow = &$this->reportRows[$interval];
-
-            $reportRow['AD_PRICE'] = $price;
-            $reportRow['CLEAN_TOTAL'] = $reportRow['TOTAL_SUM'] - $price;
-            $reportRow['ORDER_PRICE'] = round($price / $reportRow['TOTAL'], 2);
+            $reportRow['AD'] = $price;
         }
 
         unset($reportRow);
@@ -390,19 +466,66 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
 
     protected function processFinal(): void
     {
+        $this->sortReportRows();
+
         foreach ($this->reportRows as $interval => &$reportRow) {
-            $reportRow['CLEAN_TOTAL'] -= $reportRow['COST_PRICE'] ?? 0;
-            $reportRow['GRAND'] = $reportRow['TOTAL_SUM'] * 0.93 - $reportRow['COST_PRICE'] - $reportRow['AD_PRICE'];
-            $reportRow['MARGIN'] = $reportRow['TOTAL_SUM'] > 0 ? ceil((($reportRow['TOTAL_SUM'] - $reportRow['COST_PRICE']) / $reportRow['TOTAL_SUM']) * 100) : 0;
+            $reportRow['ORDER_PRICE'] = $this->calcOrderPrice($reportRow);
+            $reportRow['CLEAN_TOTAL'] = $this->calcCleanTotal($reportRow);
+            $reportRow['GRAND'] = $this->calcGrand($reportRow);
+            $reportRow['MARGIN'] = $this->calcMargin($reportRow);
         }
 
         unset($reportRow);
     }
 
-    protected function getGroupInterval(string $period, \DateTimeInterface $itemDate, \DateTimeInterface $minimalDate): string
+    protected function sortReportRows()
+    {
+        uksort($this->reportRows, function ($a, $b) {
+            $a = explode('.', substr($a, 0, 10));
+            $b = explode('.', substr($b, 0, 10));
+            $newA = $a[2] . $a[1] . $a[0];
+            $newB = $b[2] . $b[1] . $b[0];
+
+            return $newA < $newB ? -1 : 1;
+        });
+    }
+
+    /**
+     * @psalm-param ManagerOrderReportProfitRow $reportRow
+     */
+    protected function calcOrderPrice(array $reportRow): float
+    {
+        return round($reportRow['AD'] / $reportRow['TOTAL_COUNT'], 2);
+    }
+
+    /**
+     * @psalm-param ManagerOrderReportProfitRow $reportRow
+     */
+    protected function calcCleanTotal(array $reportRow): float
+    {
+        return $reportRow['TOTAL_SUM'] - ($reportRow['SUPPLIER'] ?? 0) - ($reportRow['AD'] ?? 0);
+    }
+
+    /**
+     * @psalm-param ManagerOrderReportProfitRow $reportRow
+     */
+    protected function calcGrand(array $reportRow): float
+    {
+        return $reportRow['TOTAL_SUM'] * $this->grandCoefficient - $reportRow['SUPPLIER'] - $reportRow['AD'];
+    }
+
+    /**
+     * @psalm-param ManagerOrderReportProfitRow $reportRow
+     */
+    protected function calcMargin(array $reportRow): float
+    {
+        return $reportRow['TOTAL_SUM'] > 0 ? ceil((($reportRow['TOTAL_SUM'] - $reportRow['SUPPLIER']) / $reportRow['TOTAL_SUM']) * 100) : 0;
+    }
+
+    private function getGroupInterval(string $period, \DateTimeInterface $itemDate): string
     {
         $minimalDate = $this->filterStartDate;
-        $startDate = clone $itemDate;//new \DateTime();
+        $startDate = \DateTimeImmutable::createFromInterface($itemDate)->setTimeZone($this->reportTimezone);
 
         switch ($period) {
             case static::GROUP_BY_DAY:
@@ -419,10 +542,10 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
                 break;
 
             case static::GROUP_BY_MONTH:
-                $startDate = $startDate->modify('first day of this month');
-
-                $endDate = (clone $itemDate)
+                $endDate = $startDate
                     ->modify('last day of this month');
+
+                $startDate = $startDate->modify('first day of this month');
                 break;
 
             default:
@@ -435,33 +558,34 @@ class ManagerOrderReportProfit extends \Nav\Component\Component
         return $start->format('d.m.Y') . (isset($endDate) ? ' - ' . $endDate->format('d.m.Y') : '');
     }
 
-    protected function calcSummary()
+    private function calcSummary()
     {
         $totalStats = [
             'TOTAL_SUM' => 0,
-            'PAYED' => 0,
-            'COST_PRICE' => 0,
+            'PAYED_COUNT' => 0,
+            'SUPPLIER' => 0,
             'CLEAN_TOTAL' => 0,
-            'TOTAL' => 0,
-            'AD_PRICE' => 0,
+            'TOTAL_COUNT' => 0,
+            'AD' => 0,
         ];
 
         foreach ($this->reportRows as $date => $reportRow) {
             $totalStats['TOTAL_SUM'] += (float) $reportRow['TOTAL_SUM'];
-            $totalStats['PAYED'] += (float) $reportRow['PAYED'];
-            $totalStats['COST_PRICE'] += (float) $reportRow['COST_PRICE'];
+            $totalStats['PAYED_COUNT'] += (float) $reportRow['PAYED_COUNT'];
+            $totalStats['SUPPLIER'] += (float) $reportRow['SUPPLIER'];
             $totalStats['CLEAN_TOTAL'] += (float) $reportRow['CLEAN_TOTAL'];
-            $totalStats['TOTAL'] += (float) $reportRow['TOTAL'];
-            $totalStats['AD_PRICE'] += (float) $reportRow['AD_PRICE'];
+            $totalStats['TOTAL_COUNT'] += (float) $reportRow['TOTAL_COUNT'];
+            $totalStats['AD'] += (float) $reportRow['AD'];
         }
 
-        $totalStats['SUM_AVG'] = $totalStats['PAYED'] > 0 ? round($totalStats['TOTAL_SUM'] / $totalStats['PAYED'], 2) : 0;
-        $totalStats['ORDER_PRICE'] = $totalStats['TOTAL'] > 0 ? round($totalStats['AD_PRICE'] / $totalStats['TOTAL'], 2) : 0;
+        $totalStats['SUM_AVG'] = $totalStats['PAYED_COUNT'] > 0 ? round($totalStats['TOTAL_SUM'] / $totalStats['PAYED_COUNT'], 2) : 0;
+        // Possible mistake in original code - AD
+        $totalStats['ORDER_PRICE'] = $totalStats['TOTAL_COUNT'] > 0 ? round($totalStats['AD'] / $totalStats['TOTAL_COUNT'], 2) : 0;
 
         // TOTAL_SUM - Сумма итог
-        // COST_PRICE - Расход постав.
-        $totalStats['GRAND'] = $totalStats['TOTAL_SUM'] * 0.93 - $totalStats['COST_PRICE'] - $totalStats['AD_PRICE'];
-        $totalStats['MARGIN'] = $totalStats['TOTAL_SUM'] > 0 ? ceil((($totalStats['TOTAL_SUM'] - $totalStats['COST_PRICE']) / $totalStats['TOTAL_SUM']) * 100) : 0;
+        // SUPPLIER - Расход постав.
+        $totalStats['GRAND'] = $totalStats['TOTAL_SUM'] * 0.93 - $totalStats['SUPPLIER'] - $totalStats['AD'];
+        $totalStats['MARGIN'] = $totalStats['TOTAL_SUM'] > 0 ? ceil((($totalStats['TOTAL_SUM'] - $totalStats['SUPPLIER']) / $totalStats['TOTAL_SUM']) * 100) : 0;
 
         $this->arResult['TOTAL_STATS'] = $totalStats;
     }
